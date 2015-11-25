@@ -1,4 +1,5 @@
-"""First attempt of solving Kaggle's Titanic machine learning problem using Logistic Regression
+"""Second attempt of solving Kaggle's Titanic machine learning problem using an ensemble of Logistic Regression
+and Gradient Boosting Classifier
 Author : Leticia Wanderley
 Date : 25 November 2015
 """
@@ -9,6 +10,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.cross_validation import KFold
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import GradientBoostingClassifier
 
 """Extracts passengers titles from their names then store this titles in a new column on the dataframe
 """
@@ -48,6 +50,12 @@ def convert_embarked_column_int(data_frame):
 	data_frame.loc[data_frame["EmbarkedCode"] == "C", "EmbarkedCode"] = 1
 	data_frame.loc[data_frame["EmbarkedCode"] == "Q", "EmbarkedCode"] = 2
 
+"""Generates a new features in the dataframe, the quantity of people on the passenger's family
+based on the values of the columns Parch and SibSp
+"""
+def generate_new_features(data_frame):
+	data_frame["FamilySize"] = data_frame["SibSp"] + data_frame["Parch"]
+
 """Cleans the data that is missing or not in the right format applying summarization
 """
 def clean_data(data_frame):
@@ -55,29 +63,39 @@ def clean_data(data_frame):
 	convert_sex_column_int(data_frame)
 	convert_embarked_column_int(data_frame)
 	data_frame["Fare"] = data_frame["Fare"].fillna(data_frame["Fare"].median())
+	generate_new_features(data_frame)
 
 """Creates .csv file containing the test predictions
 """
 def create_submission(train, test, predictors):
-	# Initialize the algorithm class
-	alg = LogisticRegression(random_state=1)
-
-	# Train the algorithm using all the training data
-	alg.fit(train[predictors], train["Survived"])
-
-	# Make predictions using the test set.
-	predictions = alg.predict(test[predictors])
-
-	# Create a new dataframe with only the columns Kaggle wants from the dataset.
+	algorithms = [
+		[GradientBoostingClassifier(random_state=1, n_estimators=25, max_depth=3), predictors],
+		[LogisticRegression(random_state=1), predictors]
+	]
+	
+	full_predictions = []
+	for alg, predictors in algorithms:
+		#fits the algorithm using the full training data
+		alg.fit(train[predictors], train["Survived"])
+		#predicts using the test dataset, all the columns are converted to floats to avoid an error
+		predictions = alg.predict_proba(test[predictors].astype(float))[:,1]
+		full_predictions.append(predictions)
+	
+	#because of the gradient boosting classifier generating better predictions, it is weighted higher
+	predictions = (full_predictions[0] * 3 + full_predictions[1])/4
+	predictions[predictions <= .5] = 0
+	predictions[predictions > .5] = 1
+	predictions = predictions.astype(int)
+	
 	submission = pd.DataFrame({
-        "PassengerId": test["PassengerId"],
-        "Survived": predictions
-    })
-	submission.to_csv("kaggle1.csv", index=False)
+		"PassengerId": test["PassengerId"],
+		"Survived": predictions
+	})
+	submission.to_csv("kaggle2.csv", index=False)
 
 titanic = pd.read_csv("train.csv")
 titanic_test = pd.read_csv("test.csv")
-predictors = ["Pclass", "Gender", "AgeFill", "SibSp", "Parch", "Fare", "EmbarkedCode", "TitleCode"]
+predictors = ["Pclass", "Gender", "AgeFill", "Fare", "EmbarkedCode", "TitleCode", "FamilySize"]
 
 clean_data(titanic)
 clean_data(titanic_test)
